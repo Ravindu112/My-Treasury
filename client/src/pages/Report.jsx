@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import api from '../utils/api';
+import { supabase } from '../lib/supabase';
 import Loading from '../components/Loading';
 
 export default function Report() {
@@ -8,25 +8,66 @@ export default function Report() {
   const [report, setReport] = useState(null);
 
   useEffect(() => {
-    api.get(`/reports/${projectId}`).then((res) => setReport(res.data.report));
+    supabase
+      .from('projects')
+      .select(`
+        *,
+        tasks(
+          name, allocated_cost, status,
+          assignee:assigned_to(id, name),
+          expenses(id, subject, amount, bill_image, created_at, profiles:user_id(name))
+        ),
+        budget_logs(*, changer:changed_by(id, name)),
+        project_members(user_id, role, profiles:user_id(id, name, email))
+      `)
+      .eq('id', projectId)
+      .single()
+      .then(({ data }) => {
+        if (!data) return;
+        const totalAllocated = data.tasks.reduce((s, t) => s + t.allocated_cost, 0);
+        const totalSpent = data.tasks.reduce((s, t) => {
+          return s + (t.expenses || []).reduce((s2, e) => s2 + parseFloat(e.amount || 0), 0);
+        }, 0);
+        setReport({
+          projectName: data.name,
+          description: data.description,
+          totalBudget: data.total_budget,
+          remainingBudget: data.remaining_budget,
+          totalAllocated,
+          totalSpent,
+          tasks: data.tasks.map((t) => ({
+            name: t.name,
+            allocatedCost: t.allocated_cost,
+            assignedTo: t.assignee?.name || 'Unassigned',
+            status: t.status,
+            expenses: (t.expenses || []).map((e) => ({
+              subject: e.subject,
+              amount: e.amount,
+              billImage: e.bill_image,
+              submittedBy: e.profiles?.name,
+              date: e.created_at,
+            })),
+          })),
+          budgetLogs: (data.budget_logs || []).map((l) => ({
+            previous: l.previous_total,
+            new: l.new_total,
+            reason: l.reason,
+            changedBy: l.changer?.name,
+            date: l.created_at,
+          })),
+          members: data.project_members.map((m) => ({
+            name: m.profiles?.name,
+            email: m.profiles?.email,
+            role: m.role,
+          })),
+        });
+      });
   }, [projectId]);
 
-  const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
-
-  const downloadPDF = async () => {
-    try {
-      const res = await api.get(`/reports/${projectId}/pdf`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${report?.projectName || 'budget'}-report.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Failed to download PDF.');
-    }
+  const getBillUrl = (path) => {
+    if (!path) return null;
+    const { data } = supabase.storage.from('bills').getPublicUrl(path);
+    return data.publicUrl;
   };
 
   if (!report) return <Loading text="Loading report" />;
@@ -36,13 +77,6 @@ export default function Report() {
       <Link to={`/projects/${projectId}`} className="text-blue-600 hover:text-blue-700 mb-3 sm:mb-4 inline-flex items-center gap-1 text-sm font-medium">&larr; Back to Project</Link>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6 mt-1 sm:mt-2">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Budget Report</h1>
-        <button onClick={downloadPDF}
-          className="w-full sm:w-auto bg-gradient-to-r from-red-500 to-red-600 text-white px-5 py-2.5 rounded-xl hover:from-red-600 hover:to-red-700 transition-all duration-200 font-medium shadow-sm cursor-pointer inline-flex items-center justify-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-          </svg>
-          Download PDF
-        </button>
       </div>
 
       <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 mb-6">
@@ -116,7 +150,7 @@ export default function Report() {
                   <p className="text-sm text-gray-500 mt-0.5">{e.submittedBy} &middot; {new Date(e.date).toLocaleDateString()}</p>
                   <p className="text-sm mt-1">Amount: <span className="font-semibold text-red-500">LKR {e.amount?.toFixed(2)}</span></p>
                   {e.billImage && (
-                    <a href={`${serverUrl}/uploads/${e.billImage}`} target="_blank" rel="noopener noreferrer"
+                    <a href={getBillUrl(e.billImage)} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 mt-2 text-blue-600 text-sm font-medium hover:text-blue-700">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />

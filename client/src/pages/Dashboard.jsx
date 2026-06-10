@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import Loading from '../components/Loading';
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -11,34 +13,44 @@ export default function Dashboard() {
   const [description, setDescription] = useState('');
   const [totalBudget, setTotalBudget] = useState('');
 
-  useEffect(() => {
-    api.get('/projects').then((res) => {
-      setProjects(res.data.projects);
-      setLoading(false);
-    });
-  }, []);
+  const fetchProjects = async () => {
+    const { data } = await supabase
+      .from('project_members')
+      .select('role, projects(*)')
+      .eq('user_id', user.id);
+    const mapped = (data || []).map((m) => ({ ...m.projects, role: m.role }));
+    setProjects(mapped);
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchProjects(); }, [user.id]);
 
   const createProject = async (e) => {
     e.preventDefault();
-    await api.post('/projects', { name, description, totalBudget: parseFloat(totalBudget) || 0 });
+    const budget = parseFloat(totalBudget) || 0;
+    const { data: project } = await supabase
+      .from('projects')
+      .insert({ name, description, total_budget: budget, remaining_budget: budget, created_by: user.id })
+      .select()
+      .single();
+    await supabase.from('project_members').insert({
+      project_id: project.id,
+      user_id: user.id,
+      role: 'treasurer',
+    });
     setShowModal(false);
     setName('');
     setDescription('');
     setTotalBudget('');
-    const res = await api.get('/projects');
-    setProjects(res.data.projects);
+    fetchProjects();
   };
 
   const deleteProject = async (e, projectId) => {
     e.preventDefault();
     e.stopPropagation();
     if (!confirm('Delete this project? This action cannot be undone.')) return;
-    try {
-      await api.delete(`/projects/${projectId}`);
-      setProjects((prev) => prev.filter((p) => p.id !== projectId));
-    } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete project');
-    }
+    await supabase.from('projects').delete().eq('id', projectId);
+    setProjects((prev) => prev.filter((p) => p.id !== projectId));
   };
 
   return (
@@ -67,11 +79,11 @@ export default function Dashboard() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-500">Budget</span>
-                    <span className="font-semibold text-gray-800">LKR {p.totalBudget?.toFixed(2)}</span>
+                    <span className="font-semibold text-gray-800">LKR {p.total_budget?.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-500">Remaining</span>
-                    <span className="font-semibold text-emerald-600">LKR {p.remainingBudget?.toFixed(2)}</span>
+                    <span className="font-semibold text-emerald-600">LKR {p.remaining_budget?.toFixed(2)}</span>
                   </div>
                 </div>
                 <div className="mt-4 pt-3 border-t border-gray-100">

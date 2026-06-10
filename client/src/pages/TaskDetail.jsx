@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import api from '../utils/api';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Loading from '../components/Loading';
 
@@ -17,61 +17,104 @@ export default function TaskDetail() {
   const [billImage, setBillImage] = useState(null);
   const [errorModal, setErrorModal] = useState('');
 
-  const fetchTask = async () => {
-    const res = await api.get(`/projects/${projectId}`);
-    setProject(res.data.project);
-    const found = res.data.project.Tasks?.find((t) => t.id === parseInt(taskId));
-    setTask(found);
+  const fetchData = async () => {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select(`
+        *,
+        project_members(
+          id, role, user_id,
+          profiles:user_id(id, name, email)
+        ),
+        tasks(
+          *,
+          assignee:assigned_to(id, name, email)
+        )
+      `)
+      .eq('id', projectId)
+      .single();
+    if (proj) {
+      const transformed = {
+        ...proj,
+        ProjectMembers: proj.project_members?.map(m => ({ ...m, User: m.profiles })),
+        Tasks: proj.tasks?.map(t => ({ ...t, assignee: t.assignee })),
+      };
+      setProject(transformed);
+      const found = transformed.Tasks?.find((t) => t.id === parseInt(taskId));
+      setTask(found);
+    }
   };
 
   const fetchExpenses = async () => {
-    const res = await api.get(`/${taskId}/expenses`);
-    setExpenses(res.data.expenses);
+    const { data } = await supabase
+      .from('expenses')
+      .select('*, profiles:user_id(id, name, email)')
+      .eq('task_id', taskId);
+    const mapped = (data || []).map((e) => ({ ...e, User: e.profiles }));
+    setExpenses(mapped);
   };
 
-  useEffect(() => { fetchTask(); fetchExpenses(); }, [projectId, taskId]);
+  useEffect(() => { fetchData(); fetchExpenses(); }, [projectId, taskId]);
 
-  const myRole = project?.ProjectMembers?.find((m) => m.userId === user?.id)?.role;
-  const isManager = myRole === 'treasurer' || myRole === 'sub_treasurer';
-  const isAssignee = task?.assignedTo === user?.id;
-  const canAddExpense = isAssignee && task?.assignedTo !== null;
-  const remainingAllocation = (task?.allocatedCost || 0) - (task?.spent || 0);
+  const myRole = project?.ProjectMembers?.find((m) => m.user_id === user.id)?.role;
+  const isAssignee = task?.assigned_to === user.id;
+  const canAddExpense = isAssignee && task?.assigned_to !== null;
+  const remainingAllocation = (task?.allocated_cost || 0) - (task?.spent || 0);
 
   const submitExpense = async (e) => {
     e.preventDefault();
     try {
-      const formData = new FormData();
-      formData.append('subject', subject);
-      formData.append('description', description);
-      formData.append('amount', parseFloat(amount));
-      if (billImage) formData.append('billImage', billImage);
-      await api.post(`/${taskId}/expenses`, formData);
+      const amt = parseFloat(amount);
+      let billImagePath = null;
+      if (billImage) {
+        const ext = billImage.name.split('.').pop();
+        const filePath = `${taskId}/${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from('bills')
+          .upload(filePath, billImage);
+        if (uploadError) throw uploadError;
+        billImagePath = filePath;
+      }
+      await supabase.from('expenses').insert({
+        task_id: task.id,
+        user_id: user.id,
+        subject,
+        description,
+        amount: amt,
+        bill_image: billImagePath,
+      });
+      const { data: all } = await supabase.from('expenses').select('amount').eq('task_id', task.id);
+      const totalSpent = all.reduce((sum, x) => sum + parseFloat(x.amount || 0), 0);
+      await supabase.from('tasks').update({ spent: totalSpent }).eq('id', task.id);
       setShowExpenseModal(false);
       setSubject('');
       setDescription('');
       setAmount('');
       setBillImage(null);
       fetchExpenses();
-      fetchTask();
+      fetchData();
     } catch (err) {
-      setErrorModal(err.response?.data?.error || 'Failed to create expense.');
+      setErrorModal(err.message || 'Failed to create expense.');
     }
   };
 
   const deleteExpense = async (expenseId) => {
     if (!confirm('Delete this expense?')) return;
-    try {
-      await api.delete(`/${taskId}/expenses/${expenseId}`);
-      fetchExpenses();
-      fetchTask();
-    } catch (err) {
-      setErrorModal(err.response?.data?.error || 'Failed to delete expense.');
-    }
+    await supabase.from('expenses').delete().eq('id', expenseId);
+    const { data: all } = await supabase.from('expenses').select('amount').eq('task_id', task.id);
+    const totalSpent = all.reduce((sum, x) => sum + parseFloat(x.amount || 0), 0);
+    await supabase.from('tasks').update({ spent: totalSpent }).eq('id', task.id);
+    fetchExpenses();
+    fetchData();
+  };
+
+  const getBillUrl = (path) => {
+    if (!path) return null;
+    const { data } = supabase.storage.from('bills').getPublicUrl(path);
+    return data.publicUrl;
   };
 
   if (!task) return <Loading text="Loading task" />;
-
-  const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto">
@@ -84,8 +127,8 @@ export default function TaskDetail() {
             <p className="text-sm text-gray-400 mt-2">Assigned to: <span className="font-medium text-gray-600">{task.assignee?.name || 'Unassigned'}</span></p>
           </div>
           <div className="text-left sm:text-right">
-            <p className="text-xl sm:text-2xl font-bold text-gray-800">LKR {task.allocatedCost?.toFixed(2)}</p>
-            <p className="text-sm text-gray-500 mt-1">Used: <span className="text-red-500 font-semibold">LKR {(task.spent || 0)?.toFixed(2)}</span> &middot; Remaining: <span className={((task.allocatedCost - (task.spent || 0)) < 0) ? 'text-red-500 font-semibold' : 'text-emerald-600 font-semibold'}>LKR {(task.allocatedCost - (task.spent || 0))?.toFixed(2)}</span></p>
+            <p className="text-xl sm:text-2xl font-bold text-gray-800">LKR {task.allocated_cost?.toFixed(2)}</p>
+            <p className="text-sm text-gray-500 mt-1">Used: <span className="text-red-500 font-semibold">LKR {(task.spent || 0)?.toFixed(2)}</span> &middot; Remaining: <span className={((task.allocated_cost - (task.spent || 0)) < 0) ? 'text-red-500 font-semibold' : 'text-emerald-600 font-semibold'}>LKR {(task.allocated_cost - (task.spent || 0))?.toFixed(2)}</span></p>
             {task.status && task.status !== 'pending' && (
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-2 ${task.status === 'completed' ? 'bg-green-50 text-green-700' : task.status === 'in_progress' ? 'bg-blue-50 text-blue-700' : 'bg-gray-50 text-gray-500'}`}>
               {task.status?.replace('_', ' ')}
@@ -113,14 +156,14 @@ export default function TaskDetail() {
       ) : (
         <div className="space-y-3">
           {expenses.map((exp) => {
-            const canDeleteExpense = isAssignee || exp.userId === user?.id;
+            const canDeleteExpense = isAssignee || exp.user_id === user.id;
             return (
               <div key={exp.id} className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
                 <div className="flex justify-between items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-gray-800 break-words">{exp.subject}</h3>
                     <p className="text-sm text-gray-500 mt-0.5">{exp.description}</p>
-                    <p className="text-xs text-gray-400 mt-2">By: {exp.User?.name} &middot; {new Date(exp.createdAt).toLocaleDateString()}</p>
+                    <p className="text-xs text-gray-400 mt-2">By: {exp.User?.name} &middot; {new Date(exp.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-start gap-3 shrink-0">
                     <div className="text-right">
@@ -136,9 +179,9 @@ export default function TaskDetail() {
                     )}
                   </div>
                 </div>
-                {exp.billImage && (
+                {exp.bill_image && (
                   <div className="mt-3 pt-3 border-t border-gray-50">
-                    <a href={`${serverUrl}/uploads/${exp.billImage}`} target="_blank" rel="noopener noreferrer"
+                    <a href={getBillUrl(exp.bill_image)} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-blue-600 text-sm font-medium hover:text-blue-700">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />

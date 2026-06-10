@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import api from '../utils/api';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Loading from '../components/Loading';
 
@@ -23,47 +23,102 @@ export default function ProjectDetail() {
   const [error, setError] = useState('');
   const [errorModal, setErrorModal] = useState('');
 
-  const fetchProject = () => {
+  const fetchProject = async () => {
     setError('');
-    api.get(`/projects/${projectId}`)
-      .then((res) => setProject(res.data.project))
-      .catch((err) => {
-        setError(err.response?.data?.error || 'Failed to load project');
-      });
+    const { data, error: fetchError } = await supabase
+      .from('projects')
+      .select(`
+        *,
+        project_members(
+          id, role, user_id,
+          profiles:user_id(id, name, email, avatar)
+        ),
+        tasks(
+          *,
+          assignee:assigned_to(id, name, email, avatar)
+        ),
+        budget_logs(
+          *,
+          changer:changed_by(id, name)
+        )
+      `)
+      .eq('id', projectId)
+      .single();
+    if (fetchError) {
+      setError(fetchError.message || 'Failed to load project');
+      return;
+    }
+    const transformed = {
+      ...data,
+      ProjectMembers: data.project_members?.map(m => ({ ...m, User: m.profiles })),
+      Tasks: data.tasks?.map(t => ({ ...t, assignee: t.assignee })),
+      BudgetLogs: data.budget_logs?.map(l => ({ ...l, changer: l.changer })),
+    };
+    setProject(transformed);
   };
 
   useEffect(() => { fetchProject(); }, [projectId]);
 
-  const myRole = project?.ProjectMembers?.find((m) => m.userId === user?.id)?.role;
+  const myRole = project?.ProjectMembers?.find((m) => m.user_id === user.id)?.role;
   const canManage = myRole === 'treasurer' || myRole === 'sub_treasurer';
   const isTreasurer = myRole === 'treasurer';
-  const myTasks = project?.Tasks?.filter((t) => t.assignedTo === user?.id) || [];
-  const myTotalAllocated = myTasks.reduce((sum, t) => sum + (t.allocatedCost || 0), 0);
+  const myTasks = project?.Tasks?.filter((t) => t.assigned_to === user.id) || [];
+  const myTotalAllocated = myTasks.reduce((sum, t) => sum + (t.allocated_cost || 0), 0);
   const myTotalUsed = myTasks.reduce((sum, t) => sum + (t.spent || 0), 0);
   const myTotalRemaining = myTotalAllocated - myTotalUsed;
 
   const updateBudget = async (e) => {
     e.preventDefault();
     try {
-      await api.put(`/projects/${projectId}/budget`, { newTotal: parseFloat(newBudget), reason: budgetReason });
+      const prevTotal = project.total_budget;
+      const newTotal = parseFloat(newBudget);
+      const { data: tasks } = await supabase.from('tasks').select('allocated_cost').eq('project_id', project.id);
+      const totalAllocated = tasks.reduce((sum, t) => sum + (t.allocated_cost || 0), 0);
+      if (newTotal < totalAllocated) {
+        setErrorModal('Total budget cannot be less than already allocated amount.');
+        return;
+      }
+      await supabase.from('projects').update({
+        total_budget: newTotal,
+        remaining_budget: newTotal - totalAllocated,
+      }).eq('id', project.id);
+      await supabase.from('budget_logs').insert({
+        project_id: project.id,
+        previous_total: prevTotal,
+        new_total: newTotal,
+        changed_by: user.id,
+        reason: budgetReason,
+      });
       setShowBudgetModal(false);
       setNewBudget('');
       setBudgetReason('');
       fetchProject();
     } catch (err) {
-      setErrorModal(err.response?.data?.error || 'Failed to update budget.');
+      setErrorModal(err.message || 'Failed to update budget.');
     }
   };
 
   const createTask = async (e) => {
     e.preventDefault();
     try {
-      await api.post(`/projects/${projectId}/tasks`, {
+      const cost = parseFloat(taskCost);
+      const { data: tasks } = await supabase.from('tasks').select('allocated_cost').eq('project_id', project.id);
+      const totalAllocated = tasks.reduce((sum, t) => sum + (t.allocated_cost || 0), 0);
+      const available = project.total_budget - totalAllocated;
+      if (cost > available) {
+        setErrorModal('Allocated cost exceeds remaining budget.');
+        return;
+      }
+      await supabase.from('tasks').insert({
+        project_id: project.id,
         name: taskName,
         description: taskDesc,
-        allocatedCost: parseFloat(taskCost),
-        assignedTo: taskAssignee ? parseInt(taskAssignee) : null,
+        allocated_cost: cost,
+        assigned_to: taskAssignee ? taskAssignee : null,
       });
+      await supabase.from('projects').update({
+        remaining_budget: project.total_budget - totalAllocated - cost,
+      }).eq('id', project.id);
       setShowTaskModal(false);
       setTaskName('');
       setTaskDesc('');
@@ -71,23 +126,30 @@ export default function ProjectDetail() {
       setTaskAssignee('');
       fetchProject();
     } catch (err) {
-      setErrorModal(err.response?.data?.error || 'Failed to create task.');
+      setErrorModal(err.message || 'Failed to create task.');
     }
   };
 
   const addMember = async (e) => {
     e.preventDefault();
     try {
-      const res = await api.get('/auth/users');
-      const found = res.data.users.find((u) => u.email === memberEmail);
+      const { data: users } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .eq('email', memberEmail);
+      const found = users?.[0];
       if (!found) return alert('User not found. They must register first.');
-      await api.post(`/projects/${projectId}/members`, { userId: found.id, role: memberRole });
+      await supabase.from('project_members').insert({
+        project_id: project.id,
+        user_id: found.id,
+        role: memberRole,
+      });
       setShowMemberModal(false);
       setMemberEmail('');
       setMemberRole('member');
       fetchProject();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to add member');
+      alert(err.message || 'Failed to add member');
     }
   };
 
@@ -96,12 +158,8 @@ export default function ProjectDetail() {
 
   const deleteProject = async () => {
     if (!confirm('Delete this project? This action cannot be undone.')) return;
-    try {
-      await api.delete(`/projects/${projectId}`);
-      window.location.href = '/';
-    } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete project');
-    }
+    await supabase.from('projects').delete().eq('id', project.id);
+    window.location.href = '/';
   };
 
   return (
@@ -126,8 +184,8 @@ export default function ProjectDetail() {
         <div className="w-full sm:w-auto">
           {isTreasurer ? (
             <div className="text-left sm:text-right bg-gradient-to-br from-gray-50 to-blue-50 p-4 sm:p-5 rounded-2xl">
-              <p className="text-2xl sm:text-3xl font-bold text-gray-800">LKR {project.totalBudget?.toFixed(2)}</p>
-              <p className="text-sm text-gray-500 mt-1">Remaining: <span className={project.remainingBudget < 0 ? 'text-red-500 font-semibold' : 'text-emerald-600 font-semibold'}>LKR {project.remainingBudget?.toFixed(2)}</span></p>
+              <p className="text-2xl sm:text-3xl font-bold text-gray-800">LKR {project.total_budget?.toFixed(2)}</p>
+              <p className="text-sm text-gray-500 mt-1">Remaining: <span className={project.remaining_budget < 0 ? 'text-red-500 font-semibold' : 'text-emerald-600 font-semibold'}>LKR {project.remaining_budget?.toFixed(2)}</span></p>
             </div>
           ) : (
             <div className="text-left sm:text-right bg-gradient-to-br from-purple-50 to-pink-50 p-4 sm:p-5 rounded-2xl">
@@ -156,15 +214,15 @@ export default function ProjectDetail() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
                   <div className="p-4 sm:p-5 bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-2xl">
                     <p className="text-xs sm:text-sm text-blue-600 font-medium mb-1">Total Budget</p>
-                    <p className="text-lg sm:text-2xl font-bold text-blue-700 break-all">LKR {project.totalBudget?.toFixed(2)}</p>
+                    <p className="text-lg sm:text-2xl font-bold text-blue-700 break-all">LKR {project.total_budget?.toFixed(2)}</p>
                   </div>
                   <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-2xl">
                     <p className="text-xs sm:text-sm text-emerald-600 font-medium mb-1">Allocated</p>
-                    <p className="text-lg sm:text-2xl font-bold text-emerald-700 break-all">LKR {(project.totalBudget - project.remainingBudget)?.toFixed(2)}</p>
+                    <p className="text-lg sm:text-2xl font-bold text-emerald-700 break-all">LKR {(project.total_budget - project.remaining_budget)?.toFixed(2)}</p>
                   </div>
                   <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50 to-amber-100/50 rounded-2xl col-span-2 sm:col-span-1">
                     <p className="text-xs sm:text-sm text-amber-600 font-medium mb-1">Remaining</p>
-                    <p className="text-lg sm:text-2xl font-bold text-amber-700 break-all">LKR {project.remainingBudget?.toFixed(2)}</p>
+                    <p className="text-lg sm:text-2xl font-bold text-amber-700 break-all">LKR {project.remaining_budget?.toFixed(2)}</p>
                   </div>
                 </div>
                 {!isTreasurer && (
@@ -184,11 +242,11 @@ export default function ProjectDetail() {
                   </div>
                 )}
                 <div className="flex flex-col sm:flex-row gap-3 mt-5">
-                  <button onClick={() => { setNewBudget(project.totalBudget); setShowBudgetModal(true); }}
+                  <button onClick={() => { setNewBudget(project.total_budget); setShowBudgetModal(true); }}
                     className="w-full sm:w-auto bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-2.5 rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-medium shadow-sm cursor-pointer">
                     Update Budget
                   </button>
-                  <Link to={`/projects/${projectId}/report`}
+                  <Link to={`/projects/${project.id}/report`}
                     className="w-full sm:w-auto bg-gradient-to-r from-red-500 to-red-600 text-white px-5 py-2.5 rounded-xl hover:from-red-600 hover:to-red-700 transition-all duration-200 font-medium shadow-sm inline-block text-center">
                     View Report
                   </Link>
@@ -219,14 +277,14 @@ export default function ProjectDetail() {
             {(canManage ? project.Tasks : myTasks)?.length === 0 ? <p className="text-gray-400 text-center py-8">No tasks yet.</p> : (
               <div className="space-y-3">
                 {(canManage ? project.Tasks : myTasks)?.map((t) => (
-                  <Link key={t.id} to={`/projects/${projectId}/tasks/${t.id}`} className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-4 bg-gray-50 hover:bg-gray-100 rounded-xl transition-all duration-200">
+                  <Link key={t.id} to={`/projects/${project.id}/tasks/${t.id}`} className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-4 bg-gray-50 hover:bg-gray-100 rounded-xl transition-all duration-200">
                     <div className="min-w-0">
                       <p className="font-semibold text-gray-800 truncate">{t.name}</p>
                       <p className="text-sm text-gray-500">Assigned to: {t.assignee?.name || 'Unassigned'}</p>
                     </div>
                     <div className="text-left sm:text-right">
-                      <p className="font-semibold text-gray-800">LKR {t.allocatedCost?.toFixed(2)}</p>
-                      <p className="text-xs text-gray-400">Used: LKR {(t.spent || 0)?.toFixed(2)} &middot; Remaining: LKR {(t.allocatedCost - (t.spent || 0))?.toFixed(2)}</p>
+                      <p className="font-semibold text-gray-800">LKR {t.allocated_cost?.toFixed(2)}</p>
+                      <p className="text-xs text-gray-400">Used: LKR {(t.spent || 0)?.toFixed(2)} &middot; Remaining: LKR {(t.allocated_cost - (t.spent || 0))?.toFixed(2)}</p>
                     </div>
                   </Link>
                 ))}
@@ -242,8 +300,8 @@ export default function ProjectDetail() {
             <h2 className="text-lg sm:text-xl font-semibold text-gray-800">Tasks</h2>
             {canManage && (
               <button onClick={() => setShowTaskModal(true)}
-                disabled={project.remainingBudget <= 0}
-                className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-medium shadow-sm transition-all duration-200 cursor-pointer ${project.remainingBudget <= 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800'}`}>
+                disabled={project.remaining_budget <= 0}
+                className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-medium shadow-sm transition-all duration-200 cursor-pointer ${project.remaining_budget <= 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800'}`}>
                 + New Task
               </button>
             )}
@@ -252,7 +310,7 @@ export default function ProjectDetail() {
             <div className="space-y-4">
               {(canManage ? project.Tasks : myTasks)?.map((t) => (
                 <div key={t.id} className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-                  <Link to={`/projects/${projectId}/tasks/${t.id}`} className="block">
+                  <Link to={`/projects/${project.id}/tasks/${t.id}`} className="block">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
                       <div className="min-w-0">
                         <h3 className="font-semibold text-gray-800 break-words">{t.name}</h3>
@@ -260,8 +318,8 @@ export default function ProjectDetail() {
                         <p className="text-sm text-gray-400 mt-1">Assigned to: {t.assignee?.name || 'Unassigned'}</p>
                       </div>
                       <div className="text-left sm:text-right">
-                        <p className="font-semibold text-gray-800">LKR {t.allocatedCost?.toFixed(2)}</p>
-                        <p className="text-xs text-gray-400">Used: LKR {(t.spent || 0)?.toFixed(2)} &middot; Remaining: LKR {(t.allocatedCost - (t.spent || 0))?.toFixed(2)}</p>
+                        <p className="font-semibold text-gray-800">LKR {t.allocated_cost?.toFixed(2)}</p>
+                        <p className="text-xs text-gray-400">Used: LKR {(t.spent || 0)?.toFixed(2)} &middot; Remaining: LKR {(t.allocated_cost - (t.spent || 0))?.toFixed(2)}</p>
                         <p className={`text-sm capitalize ${t.status === 'completed' ? 'text-green-600' : t.status === 'in_progress' ? 'text-blue-600' : 'text-gray-400'}`}>
                           {t.status?.replace('_', ' ')}
                         </p>
@@ -272,12 +330,13 @@ export default function ProjectDetail() {
                     <div className="mt-3 pt-3 border-t border-gray-100 flex justify-end">
                       <button onClick={async () => {
                         if (confirm('Delete this task? The budget will be refunded.')) {
-                          try {
-                            await api.delete(`/projects/${projectId}/tasks/${t.id}`);
-                            fetchProject();
-                          } catch (err) {
-                            alert(err.response?.data?.error || 'Failed to delete task');
-                          }
+                          await supabase.from('tasks').delete().eq('id', t.id);
+                          const { data: remaining } = await supabase.from('tasks').select('allocated_cost').eq('project_id', project.id);
+                          const totalLeft = remaining.reduce((sum, x) => sum + (x.allocated_cost || 0), 0);
+                          await supabase.from('projects').update({
+                            remaining_budget: project.total_budget - totalLeft,
+                          }).eq('id', project.id);
+                          fetchProject();
                         }
                       }} className="text-red-500 hover:text-red-600 text-sm font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition cursor-pointer">
                         Delete
@@ -325,7 +384,7 @@ export default function ProjectDetail() {
                     {isTreasurer && m.role !== 'treasurer' && (
                       <td className="p-3 sm:p-4 flex flex-wrap items-center gap-2">
                         <select value={m.role} onChange={async (e) => {
-                          await api.put(`/projects/${projectId}/members/${m.id}`, { role: e.target.value });
+                          await supabase.from('project_members').update({ role: e.target.value }).eq('id', m.id);
                           fetchProject();
                         }} className="border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none">
                           <option value="member">Member</option>
@@ -333,7 +392,7 @@ export default function ProjectDetail() {
                         </select>
                         <button onClick={async () => {
                           if (confirm('Remove this member?')) {
-                            await api.delete(`/projects/${projectId}/members/${m.id}`);
+                            await supabase.from('project_members').delete().eq('id', m.id);
                             fetchProject();
                           }
                         }} className="text-red-500 hover:text-red-600 text-sm font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition cursor-pointer whitespace-nowrap">
@@ -356,8 +415,8 @@ export default function ProjectDetail() {
             <div className="space-y-3">
               {project.BudgetLogs?.map((log) => (
                 <div key={log.id} className="p-4 bg-gray-50 rounded-xl">
-                  <p className="text-sm text-gray-500">{new Date(log.createdAt).toLocaleString()}</p>
-                  <p className="font-medium mt-1 break-all">LKR {log.previousTotal?.toFixed(2)} &rarr; LKR {log.newTotal?.toFixed(2)}</p>
+                  <p className="text-sm text-gray-500">{new Date(log.created_at).toLocaleString()}</p>
+                  <p className="font-medium mt-1 break-all">LKR {log.previous_total?.toFixed(2)} &rarr; LKR {log.new_total?.toFixed(2)}</p>
                   <p className="text-sm text-gray-600 mt-1">Reason: {log.reason}</p>
                   <p className="text-sm text-gray-400">By: {log.changer?.name}</p>
                 </div>

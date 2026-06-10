@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -29,7 +29,7 @@ export default function Navbar() {
             </button>
             <div className="hidden sm:flex items-center gap-4">
               <Link to="/" className="text-gray-600 hover:text-blue-600">Dashboard</Link>
-              <Link to="/profile" className="text-gray-600 hover:text-blue-600">{user.name}</Link>
+              <Link to="/profile" className="text-gray-600 hover:text-blue-600">{profile?.name || user.email}</Link>
               <button onClick={handleLogout} className="text-red-500 hover:text-red-700 cursor-pointer">Logout</button>
             </div>
           </>
@@ -38,7 +38,7 @@ export default function Navbar() {
       {user && menuOpen && (
         <div className="sm:hidden mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
           <Link to="/" onClick={() => setMenuOpen(false)} className="text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-gray-50">Dashboard</Link>
-          <Link to="/profile" onClick={() => setMenuOpen(false)} className="text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-gray-50">{user.name}</Link>
+          <Link to="/profile" onClick={() => setMenuOpen(false)} className="text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-gray-50">{profile?.name || user.email}</Link>
           <button onClick={handleLogout} className="text-red-500 hover:text-red-700 text-left px-2 py-1.5 rounded hover:bg-red-50 cursor-pointer">Logout</button>
         </div>
       )}
