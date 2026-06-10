@@ -11,7 +11,7 @@ export default function Report() {
     api.get(`/reports/${projectId}`).then((res) => setReport(res.data.report));
   }, [projectId]);
 
-  const serverUrl = 'http://localhost:5000';
+  const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
 
   const downloadPDF = async () => {
     try {

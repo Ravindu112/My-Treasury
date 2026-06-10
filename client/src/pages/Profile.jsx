@@ -19,7 +19,7 @@ export default function Profile() {
     alert('Profile updated!');
   };
 
-  const serverUrl = 'http://localhost:5000';
+  const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
 
   return (
     <div className="p-6 max-w-2xl mx-auto">

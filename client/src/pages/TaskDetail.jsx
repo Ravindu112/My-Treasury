@@ -71,7 +71,7 @@ export default function TaskDetail() {
 
   if (!task) return <Loading text="Loading task" />;
 
-  const serverUrl = 'http://localhost:5000';
+  const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto">
