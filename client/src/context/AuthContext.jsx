@@ -55,12 +55,8 @@ export function AuthProvider({ children }) {
       options: { data: { name } },
     });
     if (error) throw error;
-    if (data.user) {
-      await supabase.from('profiles').insert({
-        id: data.user.id,
-        name,
-        email,
-      });
+    // Profile is auto-created by DB trigger (handle_new_user), no manual insert needed
+    if (data?.user && data?.session) {
       await loadProfile(data.user.id);
     }
     return data;

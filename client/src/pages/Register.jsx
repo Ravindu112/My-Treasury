@@ -7,14 +7,21 @@ export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    setMessage('');
     try {
-      await register(name, email, password);
-      navigate('/');
+      const data = await register(name, email, password);
+      if (data?.user && !data?.session) {
+        setMessage('Registration successful! Please check your email for confirmation link.');
+      } else {
+        navigate('/');
+      }
     } catch (err) {
       setError(err.message || 'Registration failed');
     }
@@ -26,6 +33,7 @@ export default function Register() {
         <h2 className="text-3xl font-bold mb-2 text-center text-gray-800">Create Account</h2>
         <p className="text-gray-400 text-center mb-8">Join to manage your projects</p>
         {error && <p className="text-red-500 bg-red-50 p-3 rounded-xl mb-4 text-sm">{error}</p>}
+        {message && <p className="text-green-600 bg-green-50 p-3 rounded-xl mb-4 text-sm">{message}</p>}
         <input
           type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)}
           className="w-full p-3.5 border border-gray-200 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" required
