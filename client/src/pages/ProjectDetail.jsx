@@ -218,7 +218,7 @@ export default function ProjectDetail() {
                   </div>
                   <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-2xl">
                     <p className="text-xs sm:text-sm text-emerald-600 font-medium mb-1">Allocated</p>
-                    <p className="text-lg sm:text-2xl font-bold text-emerald-700 break-all">LKR {(project.total_budget - project.remaining_budget)?.toFixed(2)}</p>
+                    <p className="text-lg sm:text-2xl font-bold text-emerald-700 break-all">LKR {project.Tasks?.reduce((sum, t) => sum + (t.allocated_cost || 0), 0)?.toFixed(2)}</p>
                   </div>
                   <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50 to-amber-100/50 rounded-2xl col-span-2 sm:col-span-1">
                     <p className="text-xs sm:text-sm text-amber-600 font-medium mb-1">Remaining</p>
