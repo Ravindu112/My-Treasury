@@ -12,6 +12,8 @@ export default function Dashboard() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [totalBudget, setTotalBudget] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
 
   const fetchProjects = async () => {
     const { data } = await supabase
@@ -27,22 +29,32 @@ export default function Dashboard() {
 
   const createProject = async (e) => {
     e.preventDefault();
-    const budget = parseFloat(totalBudget) || 0;
-    const { data: project } = await supabase
-      .from('projects')
-      .insert({ name, description, total_budget: budget, remaining_budget: budget, created_by: user.id })
-      .select()
-      .single();
-    await supabase.from('project_members').insert({
-      project_id: project.id,
-      user_id: user.id,
-      role: 'treasurer',
-    });
-    setShowModal(false);
-    setName('');
-    setDescription('');
-    setTotalBudget('');
-    fetchProjects();
+    setCreating(true);
+    setError('');
+    try {
+      const budget = parseFloat(totalBudget) || 0;
+      const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .insert({ name, description, total_budget: budget, remaining_budget: budget, created_by: user.id })
+        .select()
+        .single();
+      if (projectError) throw projectError;
+      const { error: memberError } = await supabase.from('project_members').insert({
+        project_id: project.id,
+        user_id: user.id,
+        role: 'treasurer',
+      });
+      if (memberError) throw memberError;
+      setShowModal(false);
+      setName('');
+      setDescription('');
+      setTotalBudget('');
+      fetchProjects();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const deleteProject = async (e, projectId) => {
@@ -111,11 +123,14 @@ export default function Dashboard() {
             <textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)}
               className="w-full p-3.5 border border-gray-200 rounded-xl mb-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" rows="3" />
             <input type="number" step="0.01" placeholder="Total Budget (LKR)" value={totalBudget} onChange={(e) => setTotalBudget(e.target.value)}
-              className="w-full p-3.5 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" />
+              className="w-full p-3.5 border border-gray-200 rounded-xl mb-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" />
+            {error && (
+              <p className="text-red-500 text-sm mb-4 text-center">{error}</p>
+            )}
             <div className="flex flex-col sm:flex-row gap-3">
-              <button type="submit"
-                className="w-full sm:flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3 rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-medium cursor-pointer shadow-md order-2 sm:order-1">
-                Create
+              <button type="submit" disabled={creating}
+                className="w-full sm:flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3 rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-medium cursor-pointer shadow-md order-2 sm:order-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                {creating ? 'Creating...' : 'Create'}
               </button>
               <button type="button" onClick={() => setShowModal(false)}
                 className="w-full sm:flex-1 bg-gray-100 text-gray-700 px-4 py-3 rounded-xl hover:bg-gray-200 transition-all duration-200 font-medium cursor-pointer order-1 sm:order-2">

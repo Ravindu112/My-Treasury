@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.projects (
   total_budget DOUBLE PRECISION NOT NULL DEFAULT 0,
   remaining_budget DOUBLE PRECISION NOT NULL DEFAULT 0,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed')),
-  created_by UUID REFERENCES auth.users(id) NOT NULL,
+  created_by UUID REFERENCES public.profiles(id) NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -29,7 +29,7 @@ ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS public.project_members (
   id BIGSERIAL PRIMARY KEY,
   project_id BIGINT REFERENCES public.projects(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES auth.users(id),
+  user_id UUID REFERENCES public.profiles(id),
   role TEXT DEFAULT 'member' CHECK (role IN ('treasurer', 'sub_treasurer', 'member')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(project_id, user_id)
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   description TEXT DEFAULT '',
   allocated_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
   spent DOUBLE PRECISION NOT NULL DEFAULT 0,
-  assigned_to UUID REFERENCES auth.users(id),
+  assigned_to UUID REFERENCES public.profiles(id),
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -55,7 +55,7 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS public.expenses (
   id BIGSERIAL PRIMARY KEY,
   task_id BIGINT REFERENCES public.tasks(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES auth.users(id) NOT NULL,
+  user_id UUID REFERENCES public.profiles(id) NOT NULL,
   subject TEXT NOT NULL,
   description TEXT DEFAULT '',
   amount DOUBLE PRECISION NOT NULL,
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS public.budget_logs (
   project_id BIGINT REFERENCES public.projects(id) ON DELETE CASCADE,
   previous_total DOUBLE PRECISION NOT NULL,
   new_total DOUBLE PRECISION NOT NULL,
-  changed_by UUID REFERENCES auth.users(id) NOT NULL,
+  changed_by UUID REFERENCES public.profiles(id) NOT NULL,
   reason TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -99,30 +99,64 @@ CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING
 
 -- PROJECTS
 CREATE POLICY "Members can view projects" ON public.projects FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = id AND user_id = auth.uid())
+  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = projects.id AND user_id = auth.uid())
 );
 CREATE POLICY "Treasurers can insert projects" ON public.projects FOR INSERT WITH CHECK (
   auth.uid() = created_by
 );
 CREATE POLICY "Treasurers can update projects" ON public.projects FOR UPDATE USING (
-  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = id AND user_id = auth.uid() AND role = 'treasurer')
+  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = projects.id AND user_id = auth.uid() AND role = 'treasurer')
 );
 CREATE POLICY "Treasurers can delete projects" ON public.projects FOR DELETE USING (
-  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = id AND user_id = auth.uid() AND role = 'treasurer')
+  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = projects.id AND user_id = auth.uid() AND role = 'treasurer')
 );
 
 -- PROJECT MEMBERS
 CREATE POLICY "Members can view project members" ON public.project_members FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.project_members pm WHERE pm.project_id = project_id AND pm.user_id = auth.uid())
+  EXISTS (
+    SELECT 1 FROM public.projects p
+    WHERE p.id = project_id
+      AND EXISTS (
+        SELECT 1 FROM public.project_members pm
+        WHERE pm.project_id = p.id AND pm.user_id = auth.uid()
+      )
+  )
 );
 CREATE POLICY "Treasurers can insert members" ON public.project_members FOR INSERT WITH CHECK (
-  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = project_id AND user_id = auth.uid() AND role = 'treasurer')
+  -- Allow the project creator to add themselves as the first treasurer
+  (user_id = auth.uid() AND role = 'treasurer' AND EXISTS (
+    SELECT 1 FROM public.projects WHERE id = project_id AND created_by = auth.uid()
+  ))
+  OR
+  -- Allow existing treasurers to add other members
+  EXISTS (
+    SELECT 1 FROM public.projects p
+    WHERE p.id = project_id
+      AND EXISTS (
+        SELECT 1 FROM public.project_members pm
+        WHERE pm.project_id = p.id AND pm.user_id = auth.uid() AND pm.role = 'treasurer'
+      )
+  )
 );
 CREATE POLICY "Treasurers can update members" ON public.project_members FOR UPDATE USING (
-  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = project_id AND user_id = auth.uid() AND role = 'treasurer')
+  EXISTS (
+    SELECT 1 FROM public.projects p
+    WHERE p.id = project_id
+      AND EXISTS (
+        SELECT 1 FROM public.project_members pm
+        WHERE pm.project_id = p.id AND pm.user_id = auth.uid() AND pm.role = 'treasurer'
+      )
+  )
 );
 CREATE POLICY "Treasurers can delete members" ON public.project_members FOR DELETE USING (
-  EXISTS (SELECT 1 FROM public.project_members WHERE project_id = project_id AND user_id = auth.uid() AND role = 'treasurer')
+  EXISTS (
+    SELECT 1 FROM public.projects p
+    WHERE p.id = project_id
+      AND EXISTS (
+        SELECT 1 FROM public.project_members pm
+        WHERE pm.project_id = p.id AND pm.user_id = auth.uid() AND pm.role = 'treasurer'
+      )
+  )
 );
 
 -- TASKS
