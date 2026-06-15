@@ -17,6 +17,7 @@ export default function Report() {
       const html2canvas = (await import('html2canvas')).default;
       const canvas = await html2canvas(reportRef.current, {
         scale: 2,
+        allowTaint: true,
         useCORS: true,
         logging: false,
       });
@@ -36,6 +37,8 @@ export default function Report() {
         heightLeft -= pdf.internal.pageSize.getHeight();
       }
       pdf.save(`${report.projectName.replace(/\s+/g, '_')}_Report.pdf`);
+    } catch (err) {
+      alert('Failed to generate PDF: ' + err.message);
     } finally {
       setDownloading(false);
     }
