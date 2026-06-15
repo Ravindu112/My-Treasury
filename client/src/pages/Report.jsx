@@ -1,47 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import Loading from '../components/Loading';
 
 export default function Report() {
   const { projectId } = useParams();
-  const reportRef = useRef(null);
   const [report, setReport] = useState(null);
   const [downloading, setDownloading] = useState(false);
 
-  const downloadPdf = async () => {
-    if (!reportRef.current) return;
+  const downloadPdf = () => {
     setDownloading(true);
-    try {
-      const { default: jsPDF } = await import('jspdf');
-      const html2canvas = (await import('html2canvas')).default;
-      const canvas = await html2canvas(reportRef.current, {
-        scale: 2,
-        allowTaint: true,
-        useCORS: true,
-        logging: false,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pdf.internal.pageSize.getHeight();
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pdf.internal.pageSize.getHeight();
-      }
-      pdf.save(`${report.projectName.replace(/\s+/g, '_')}_Report.pdf`);
-    } catch (err) {
-      alert('Failed to generate PDF: ' + err.message);
-    } finally {
+    setTimeout(() => {
+      window.print();
       setDownloading(false);
-    }
+    }, 300);
   };
 
   useEffect(() => {
@@ -110,13 +82,20 @@ export default function Report() {
   if (!report) return <Loading text="Loading report" />;
 
   return (
-    <div className="p-4 sm:p-6 max-w-5xl mx-auto" ref={reportRef}>
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
+      <style>{`
+        @media print {
+          body { background: white !important; }
+          nav, .no-print { display: none !important; }
+          @page { margin: 15mm; }
+        }
+      `}</style>
       <Link to={`/projects/${projectId}`} className="text-blue-600 hover:text-blue-700 mb-3 sm:mb-4 inline-flex items-center gap-1 text-sm font-medium">&larr; Back to Project</Link>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6 mt-1 sm:mt-2">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Budget Report</h1>
         <button onClick={downloadPdf} disabled={downloading}
-          className="self-start sm:self-auto bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition font-medium text-sm cursor-pointer disabled:opacity-50">
-          {downloading ? 'Generating...' : 'Download PDF'}
+          className="no-print self-start sm:self-auto bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition font-medium text-sm cursor-pointer disabled:opacity-50">
+          {downloading ? 'Opening Print Dialog...' : 'Download PDF'}
         </button>
       </div>
 
