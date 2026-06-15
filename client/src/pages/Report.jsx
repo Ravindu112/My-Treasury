@@ -40,13 +40,48 @@ export default function Report() {
         }
       };
 
-      // ===== PART 1: BUDGET REPORT =====
-      doc.setFontSize(18);
-      doc.text(`Budget Report - ${report.projectName}`, m, y); y += 7;
-      doc.setFontSize(8);
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, m, y); y += 10;
+      const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+      const fmtMoney = (v) => `LKR ${(v || 0).toFixed(2)}`;
 
-      // Summary boxes
+      // Group tasks by assignee
+      const byPerson = {};
+      report.tasks.forEach(t => {
+        const person = t.assignedTo || 'Unassigned';
+        if (!byPerson[person]) byPerson[person] = { tasks: [], totalAllocated: 0, totalSpent: 0 };
+        byPerson[person].tasks.push(t);
+        byPerson[person].totalAllocated += t.allocatedCost || 0;
+        byPerson[person].totalSpent += t.expenses.reduce((s, e) => s + (e.amount || 0), 0);
+      });
+
+      // All expenses with task name
+      const allExpenses = report.tasks.flatMap(t =>
+        t.expenses.map(e => ({ ...e, taskName: t.name, assignedTo: t.assignedTo }))
+      );
+      const withBill = allExpenses.filter(e => e.billImage);
+
+      // Group expenses by submitter
+      const expenseByPerson = {};
+      allExpenses.forEach(e => {
+        const p = e.submittedBy || 'Unknown';
+        if (!expenseByPerson[p]) expenseByPerson[p] = [];
+        expenseByPerson[p].push(e);
+      });
+
+      // ===== TITLE =====
+      doc.setFontSize(20);
+      doc.text('Budget Report', m, y); y += 8;
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.text(report.projectName, m, y); y += 6;
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8);
+      doc.text(`Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, m, y); y += 4;
+      if (report.description) {
+        doc.text(report.description, m, y); y += 3;
+      }
+      y += 4;
+
+      // ===== SUMMARY BOXES =====
       const bx = (pw / 4) - 1;
       const items = [
         { l: 'Total Budget', v: report.totalBudget },
@@ -68,18 +103,90 @@ export default function Report() {
       });
       y += 24;
 
-      // Task Breakdown table
+      // ===== TEAM MEMBERS =====
+      if (report.members && report.members.length > 0) {
+        pageBreak(report.members.length * 5 + 14);
+        doc.setFontSize(13);
+        doc.text('Team Members', m, y); y += 7;
+        doc.setDrawColor(210);
+        doc.setFillColor(245, 245, 245);
+        doc.rect(m, y, cw, 5, 'FD');
+        doc.setFontSize(7);
+        doc.setFont(undefined, 'bold');
+        doc.text('Name', m + 2, y + 3.5);
+        doc.text('Email', m + 50, y + 3.5);
+        doc.text('Role', m + cw - 20, y + 3.5);
+        doc.setFont(undefined, 'normal');
+        y += 5.5;
+        report.members.forEach((mbr, i) => {
+          pageBreak(5);
+          doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
+          doc.rect(m, y, cw, 4.5, 'F');
+          doc.text(mbr.name || 'Unknown', m + 2, y + 3);
+          doc.text(mbr.email || '', m + 50, y + 3);
+          doc.text(mbr.role || '', m + cw - 20, y + 3);
+          y += 5;
+        });
+        y += 5;
+      }
+
+      // ===== ALLOCATION BY PERSON =====
+      pageBreak(14);
+      doc.setFontSize(13);
+      doc.text('Allocation by Person', m, y); y += 7;
+      if (Object.keys(byPerson).length === 0) {
+        doc.setFontSize(8);
+        doc.text('No tasks allocated.', m, y); y += 6;
+      } else {
+        Object.entries(byPerson).forEach(([person, data]) => {
+          pageBreak(12);
+          doc.setDrawColor(200);
+          doc.setFillColor(60, 60, 60);
+          doc.setTextColor(255);
+          doc.rect(m, y, cw, 6, 'F');
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'bold');
+          doc.text(person, m + 2, y + 4);
+          doc.text(`Allocated: ${fmtMoney(data.totalAllocated)}`, m + cw - 75, y + 2);
+          doc.text(`Spent: ${fmtMoney(data.totalSpent)}`, m + cw - 75, y + 5);
+          doc.setTextColor(0);
+          doc.setFont(undefined, 'normal');
+          y += 7;
+
+          data.tasks.forEach((t, i) => {
+            pageBreak(5);
+            const taskSpent = t.expenses.reduce((s, e) => s + (e.amount || 0), 0);
+            const remaining = (t.allocatedCost || 0) - taskSpent;
+            doc.setFillColor(i % 2 === 0 ? 250 : 255, i % 2 === 0 ? 250 : 255, i % 2 === 0 ? 252 : 255);
+            doc.rect(m + 2, y, cw - 2, 4.5, 'F');
+            doc.setFontSize(6.5);
+            doc.text(t.name, m + 4, y + 3);
+            doc.text(`${fmtDate(t.created_at)}`, m + cw - 90, y + 3);
+            doc.setFont(undefined, 'bold');
+            doc.text(fmtMoney(t.allocatedCost), m + cw - 55, y + 3);
+            doc.setFont(undefined, 'normal');
+            doc.text(fmtMoney(taskSpent), m + cw - 32, y + 3);
+            doc.text(fmtMoney(remaining), m + cw - 15, y + 3);
+            y += 5;
+          });
+          y += 3;
+        });
+      }
+      y += 4;
+
+      // ===== TASK BREAKDOWN =====
+      pageBreak(report.tasks.length * 5 + 14);
       doc.setFontSize(13);
       doc.text('Task Breakdown', m, y); y += 7;
-      const col = [cw * 0.30, cw * 0.20, cw * 0.15, cw * 0.175, cw * 0.175];
-      const hd = ['Task', 'Assigned To', 'Status', 'Allocated', 'Spent'];
+      const col = [cw * 0.22, cw * 0.16, cw * 0.12, cw * 0.13, cw * 0.13, cw * 0.12, cw * 0.12];
+      const hd = ['Task', 'Assigned To', 'Created', 'Status', 'Allocated', 'Spent', 'Remaining'];
       doc.setFillColor(60, 60, 60);
       doc.setTextColor(255);
-      doc.setFontSize(7);
+      doc.setFontSize(6);
       let cx = m;
       hd.forEach((h, i) => {
         doc.rect(cx, y, col[i], 6, 'F');
-        doc.text(h, cx + 1, y + 4);
+        doc.text(h, cx + 0.5, y + 4);
         cx += col[i];
       });
       doc.setTextColor(0);
@@ -87,93 +194,127 @@ export default function Report() {
       report.tasks.forEach((t, i) => {
         pageBreak(5);
         const ts = t.expenses.reduce((s, e) => s + (e.amount || 0), 0);
+        const remaining = (t.allocatedCost || 0) - ts;
         doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
         cx = m;
         hd.forEach((_, ci) => { doc.rect(cx, y, col[ci], 5, 'F'); cx += col[ci]; });
-        doc.setFontSize(7);
-        doc.text(t.name, m + 1, y + 3.5);
-        doc.text(t.assignedTo, m + col[0] + 1, y + 3.5);
-        doc.text(t.status?.replace('_', ' ') || '', m + col[0] + col[1] + 1, y + 3.5);
-        doc.text(`LKR ${(t.allocatedCost || 0).toFixed(2)}`, m + col[0] + col[1] + col[2] + 1, y + 3.5);
-        doc.text(`LKR ${ts.toFixed(2)}`, m + col[0] + col[1] + col[2] + col[3] + 1, y + 3.5);
+        doc.setFontSize(6);
+        doc.text(t.name, m + 0.5, y + 3.5);
+        doc.text(t.assignedTo, m + col[0] + 0.5, y + 3.5);
+        doc.text(fmtDate(t.created_at), m + col[0] + col[1] + 0.5, y + 3.5);
+        doc.text(t.status?.replace('_', ' ') || '', m + col[0] + col[1] + col[2] + 0.5, y + 3.5);
+        doc.text(fmtMoney(t.allocatedCost), m + col[0] + col[1] + col[2] + col[3] + 0.5, y + 3.5);
+        doc.text(fmtMoney(ts), m + col[0] + col[1] + col[2] + col[3] + col[4] + 0.5, y + 3.5);
+        doc.text(fmtMoney(remaining), m + col[0] + col[1] + col[2] + col[3] + col[4] + col[5] + 0.5, y + 3.5);
         y += 5;
       });
-      y += 8;
-
-      // Expense Details (no bills)
-      const allExpenses = report.tasks.flatMap(t =>
-        t.expenses.map(e => ({ ...e, taskName: t.name }))
-      );
-      const noBill = allExpenses.filter(e => !e.billImage);
-      const withBill = allExpenses.filter(e => e.billImage);
-      pageBreak(10);
-      doc.setFontSize(13);
-      doc.text('Expense Details', m, y); y += 7;
-      if (noBill.length === 0 && withBill.length === 0) {
-        doc.setFontSize(8);
-        doc.text('No expenses recorded.', m, y); y += 6;
-      } else if (noBill.length === 0) {
-        doc.setFontSize(8);
-        doc.text('All expenses have bills (see Bills Gallery section).', m, y); y += 6;
-      } else {
-        noBill.forEach((e, i) => {
-          pageBreak(12);
-          doc.setDrawColor(220);
-          doc.setFillColor(248, 249, 250);
-          doc.rect(m, y, cw, 10, 'FD');
-          doc.setFontSize(8);
-          doc.setFont(undefined, 'bold');
-          doc.text(e.subject, m + 2, y + 3);
-          doc.setFont(undefined, 'normal');
-          doc.text(`${e.submittedBy || 'Unknown'} | ${new Date(e.date).toLocaleDateString()}`, m + 2, y + 6);
-          doc.text(`Amount: LKR ${(e.amount || 0).toFixed(2)}`, m + 2, y + 9);
-          doc.text(`Task: ${e.taskName}`, m + cw - 40, y + 3, { align: 'right' });
-          y += 12;
-        });
-      }
       y += 6;
 
-      // Budget Change History
-      pageBreak(10);
-      doc.setFontSize(13);
-      doc.text('Budget Change History', m, y); y += 7;
-      if (report.budgetLogs.length === 0) {
-        doc.setFontSize(8);
-        doc.text('No budget changes recorded.', m, y); y += 6;
-      } else {
-        report.budgetLogs.forEach((log, i) => {
-          pageBreak(10);
-          doc.setDrawColor(220);
-          doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
-          doc.rect(m, y, cw, 8, 'FD');
-          doc.setFontSize(7);
-          doc.text(`LKR ${(log.previous || 0).toFixed(2)}  ->  LKR ${(log.new || 0).toFixed(2)}`, m + 2, y + 3);
-          doc.text(`Reason: ${log.reason}`, m + 2, y + 6);
-          doc.text(`${log.changedBy || 'Unknown'} | ${new Date(log.date).toLocaleDateString()}`, m + cw - 45, y + 3);
-          y += 10;
+      // ===== EXPENSE DETAILS BY PERSON =====
+      if (allExpenses.length > 0) {
+        pageBreak(10);
+        doc.setFontSize(13);
+        doc.text('Expense Details', m, y); y += 7;
+
+        Object.entries(expenseByPerson).forEach(([person, expenses]) => {
+          const personTotal = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+          pageBreak(expenses.length * 9 + 10);
+          doc.setDrawColor(180);
+          doc.setFillColor(60, 60, 60);
+          doc.setTextColor(255);
+          doc.rect(m, y, cw, 6, 'F');
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'bold');
+          doc.text(`${person}  |  Total Spent: ${fmtMoney(personTotal)}`, m + 2, y + 4);
+          doc.setTextColor(0);
+          doc.setFont(undefined, 'normal');
+          y += 7;
+
+          // Group expenses by task within person
+          const byTask = {};
+          expenses.forEach(e => {
+            if (!byTask[e.taskName]) byTask[e.taskName] = [];
+            byTask[e.taskName].push(e);
+          });
+
+          Object.entries(byTask).forEach(([taskName, taskExpenses]) => {
+            pageBreak(taskExpenses.length * 9 + 7);
+            doc.setFillColor(240, 242, 248);
+            doc.rect(m + 2, y, cw - 2, 4.5, 'F');
+            doc.setFontSize(7);
+            doc.setFont(undefined, 'bold');
+            doc.text(`Task: ${taskName}`, m + 4, y + 3);
+            doc.setFont(undefined, 'normal');
+            const taskTotal = taskExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+            doc.text(fmtMoney(taskTotal), m + cw - 18, y + 3);
+            y += 5.5;
+
+            taskExpenses.forEach((e, i) => {
+              pageBreak(8);
+              doc.setDrawColor(220);
+              doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
+              doc.rect(m + 4, y, cw - 4, 7, 'FD');
+              doc.setFontSize(7);
+              doc.setFont(undefined, 'bold');
+              doc.text(e.subject, m + 6, y + 2.5);
+              doc.setFont(undefined, 'normal');
+              doc.text(fmtDate(e.date), m + 6, y + 5);
+              doc.text(`By: ${e.submittedBy || 'Unknown'}`, m + 50, y + 5);
+              doc.text(fmtMoney(e.amount), m + cw - 22, y + 2.5);
+              if (e.billImage) {
+                doc.setFontSize(6);
+                doc.text('[Bill Attached]', m + cw - 28, y + 5);
+                doc.setFontSize(7);
+              }
+              y += 8;
+            });
+            y += 2;
+          });
+          y += 2;
         });
       }
 
-      // ===== PART 2: BILLS GALLERY =====
+      // ===== BUDGET CHANGE HISTORY =====
+      if (report.budgetLogs.length > 0) {
+        pageBreak(report.budgetLogs.length * 8 + 14);
+        doc.setFontSize(13);
+        doc.text('Budget Change History', m, y); y += 7;
+        report.budgetLogs.forEach((log, i) => {
+          pageBreak(8);
+          doc.setDrawColor(220);
+          doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
+          doc.rect(m, y, cw, 7, 'FD');
+          doc.setFontSize(7);
+          doc.text(`${fmtMoney(log.previous)}  →  ${fmtMoney(log.new)}`, m + 2, y + 2.5);
+          doc.text(`Reason: ${log.reason}`, m + 2, y + 5);
+          doc.text(`${log.changedBy || 'Unknown'} | ${fmtDate(log.date)}`, m + cw - 48, y + 2.5);
+          y += 8.5;
+        });
+        y += 4;
+      }
+
+      // ===== BILLS GALLERY =====
       if (withBill.length > 0) {
         doc.addPage();
         y = m;
         doc.setFontSize(16);
-        doc.text('Bills Gallery', m, y); y += 10;
+        doc.text('Bills Gallery', m, y); y += 8;
+        doc.setFontSize(8);
+        doc.text(`Total bills: ${withBill.length}`, m, y); y += 10;
 
         const imgW = (cw - 4) / 2;
-        const capH = 8;
-        const imgH = 50;
+        const capH = 10;
+        const imgH = 55;
         const cellH = imgH + capH + 2;
 
         for (let i = 0; i < withBill.length; i += 2) {
-          pageBreak(cellH);
+          pageBreak(cellH + 5);
           for (let j = 0; j < 2; j++) {
             const idx = i + j;
             if (idx >= withBill.length) break;
             const e = withBill[idx];
             const ex = m + j * (imgW + 4);
-            doc.setDrawColor(200);
+            doc.setDrawColor(180);
             doc.rect(ex, y, imgW, imgH);
             const imgUrl = getBillUrl(e.billImage);
             if (imgUrl) {
@@ -182,11 +323,11 @@ export default function Report() {
                 try {
                   doc.addImage(dataUrl, 'JPEG', ex + 1, y + 1, imgW - 2, imgH - 2);
                 } catch {
-                  doc.setFontSize(7);
+                  doc.setFontSize(6);
                   doc.text('Image not available', ex + 5, y + imgH / 2);
                 }
               } else {
-                doc.setFontSize(7);
+                doc.setFontSize(6);
                 doc.text('Image not available', ex + 5, y + imgH / 2);
               }
             }
@@ -194,7 +335,8 @@ export default function Report() {
             doc.rect(ex, y + imgH, imgW, capH, 'F');
             doc.setFontSize(6);
             doc.text(e.subject, ex + 1, y + imgH + 3);
-            doc.text(`LKR ${(e.amount || 0).toFixed(2)} | ${e.submittedBy || 'Unknown'}`, ex + 1, y + imgH + 6);
+            doc.text(fmtMoney(e.amount), ex + 1, y + imgH + 6);
+            doc.text(`${e.submittedBy || 'Unknown'} | ${e.taskName}`, ex + 1, y + imgH + 9);
           }
           y += cellH + 2;
         }
@@ -214,9 +356,9 @@ export default function Report() {
       .select(`
         *,
         tasks(
-          name, allocated_cost, status,
-          assignee:assigned_to(id, name),
-          expenses(id, subject, amount, bill_image, created_at, profiles:user_id(name))
+          name, allocated_cost, status, created_at,
+          assignee:assigned_to(id, name, email),
+          expenses(id, subject, amount, bill_image, created_at, profiles:user_id(name, email))
         ),
         budget_logs(*, changer:changed_by(id, name)),
         project_members(user_id, role, profiles:user_id(id, name, email))
@@ -240,12 +382,15 @@ export default function Report() {
             name: t.name,
             allocatedCost: t.allocated_cost,
             assignedTo: t.assignee?.name || 'Unassigned',
+            assigneeEmail: t.assignee?.email || '',
             status: t.status,
+            created_at: t.created_at,
             expenses: (t.expenses || []).map((e) => ({
               subject: e.subject,
               amount: e.amount,
               billImage: e.bill_image,
               submittedBy: e.profiles?.name,
+              submittedEmail: e.profiles?.email || '',
               date: e.created_at,
             })),
           })),
