@@ -8,12 +8,204 @@ export default function Report() {
   const [report, setReport] = useState(null);
   const [downloading, setDownloading] = useState(false);
 
-  const downloadPdf = () => {
+  const fetchImageAsDataUrl = async (url) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  const downloadPdf = async () => {
     setDownloading(true);
-    setTimeout(() => {
-      window.print();
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pw = doc.internal.pageSize.getWidth();
+      const ph = doc.internal.pageSize.getHeight();
+      const m = 15;
+      const cw = pw - m * 2;
+      let y = m;
+
+      const pageBreak = (needed) => {
+        if (y + needed > ph - m) {
+          doc.addPage();
+          y = m;
+        }
+      };
+
+      // ===== PART 1: BUDGET REPORT =====
+      doc.setFontSize(18);
+      doc.text(`Budget Report - ${report.projectName}`, m, y); y += 7;
+      doc.setFontSize(8);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, m, y); y += 10;
+
+      // Summary boxes
+      const bx = (pw / 4) - 1;
+      const items = [
+        { l: 'Total Budget', v: report.totalBudget },
+        { l: 'Allocated', v: report.totalAllocated },
+        { l: 'Spent', v: report.totalSpent },
+        { l: 'Remaining', v: report.remainingBudget },
+      ];
+      items.forEach((d, i) => {
+        const x = m + i * bx + (i > 0 ? i * 1 : 0);
+        doc.setDrawColor(200);
+        doc.setFillColor(245, 247, 250);
+        doc.rect(x, y, bx, 16, 'FD');
+        doc.setFontSize(7);
+        doc.text(d.l, x + 2, y + 5);
+        doc.setFontSize(9);
+        doc.setFont(undefined, 'bold');
+        doc.text(`LKR ${(d.v || 0).toFixed(2)}`, x + 2, y + 13);
+        doc.setFont(undefined, 'normal');
+      });
+      y += 24;
+
+      // Task Breakdown table
+      doc.setFontSize(13);
+      doc.text('Task Breakdown', m, y); y += 7;
+      const col = [cw * 0.30, cw * 0.20, cw * 0.15, cw * 0.175, cw * 0.175];
+      const hd = ['Task', 'Assigned To', 'Status', 'Allocated', 'Spent'];
+      doc.setFillColor(60, 60, 60);
+      doc.setTextColor(255);
+      doc.setFontSize(7);
+      let cx = m;
+      hd.forEach((h, i) => {
+        doc.rect(cx, y, col[i], 6, 'F');
+        doc.text(h, cx + 1, y + 4);
+        cx += col[i];
+      });
+      doc.setTextColor(0);
+      y += 6;
+      report.tasks.forEach((t, i) => {
+        pageBreak(5);
+        const ts = t.expenses.reduce((s, e) => s + (e.amount || 0), 0);
+        doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
+        cx = m;
+        hd.forEach((_, ci) => { doc.rect(cx, y, col[ci], 5, 'F'); cx += col[ci]; });
+        doc.setFontSize(7);
+        doc.text(t.name, m + 1, y + 3.5);
+        doc.text(t.assignedTo, m + col[0] + 1, y + 3.5);
+        doc.text(t.status?.replace('_', ' ') || '', m + col[0] + col[1] + 1, y + 3.5);
+        doc.text(`LKR ${(t.allocatedCost || 0).toFixed(2)}`, m + col[0] + col[1] + col[2] + 1, y + 3.5);
+        doc.text(`LKR ${ts.toFixed(2)}`, m + col[0] + col[1] + col[2] + col[3] + 1, y + 3.5);
+        y += 5;
+      });
+      y += 8;
+
+      // Expense Details (no bills)
+      const allExpenses = report.tasks.flatMap(t =>
+        t.expenses.map(e => ({ ...e, taskName: t.name }))
+      );
+      const noBill = allExpenses.filter(e => !e.billImage);
+      const withBill = allExpenses.filter(e => e.billImage);
+      pageBreak(10);
+      doc.setFontSize(13);
+      doc.text('Expense Details', m, y); y += 7;
+      if (noBill.length === 0 && withBill.length === 0) {
+        doc.setFontSize(8);
+        doc.text('No expenses recorded.', m, y); y += 6;
+      } else if (noBill.length === 0) {
+        doc.setFontSize(8);
+        doc.text('All expenses have bills (see Bills Gallery section).', m, y); y += 6;
+      } else {
+        noBill.forEach((e, i) => {
+          pageBreak(12);
+          doc.setDrawColor(220);
+          doc.setFillColor(248, 249, 250);
+          doc.rect(m, y, cw, 10, 'FD');
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'bold');
+          doc.text(e.subject, m + 2, y + 3);
+          doc.setFont(undefined, 'normal');
+          doc.text(`${e.submittedBy || 'Unknown'} | ${new Date(e.date).toLocaleDateString()}`, m + 2, y + 6);
+          doc.text(`Amount: LKR ${(e.amount || 0).toFixed(2)}`, m + 2, y + 9);
+          doc.text(`Task: ${e.taskName}`, m + cw - 40, y + 3, { align: 'right' });
+          y += 12;
+        });
+      }
+      y += 6;
+
+      // Budget Change History
+      pageBreak(10);
+      doc.setFontSize(13);
+      doc.text('Budget Change History', m, y); y += 7;
+      if (report.budgetLogs.length === 0) {
+        doc.setFontSize(8);
+        doc.text('No budget changes recorded.', m, y); y += 6;
+      } else {
+        report.budgetLogs.forEach((log, i) => {
+          pageBreak(10);
+          doc.setDrawColor(220);
+          doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 249 : 255, i % 2 === 0 ? 250 : 255);
+          doc.rect(m, y, cw, 8, 'FD');
+          doc.setFontSize(7);
+          doc.text(`LKR ${(log.previous || 0).toFixed(2)}  ->  LKR ${(log.new || 0).toFixed(2)}`, m + 2, y + 3);
+          doc.text(`Reason: ${log.reason}`, m + 2, y + 6);
+          doc.text(`${log.changedBy || 'Unknown'} | ${new Date(log.date).toLocaleDateString()}`, m + cw - 45, y + 3);
+          y += 10;
+        });
+      }
+
+      // ===== PART 2: BILLS GALLERY =====
+      if (withBill.length > 0) {
+        doc.addPage();
+        y = m;
+        doc.setFontSize(16);
+        doc.text('Bills Gallery', m, y); y += 10;
+
+        const imgW = (cw - 4) / 2;
+        const capH = 8;
+        const imgH = 50;
+        const cellH = imgH + capH + 2;
+
+        for (let i = 0; i < withBill.length; i += 2) {
+          pageBreak(cellH);
+          for (let j = 0; j < 2; j++) {
+            const idx = i + j;
+            if (idx >= withBill.length) break;
+            const e = withBill[idx];
+            const ex = m + j * (imgW + 4);
+            doc.setDrawColor(200);
+            doc.rect(ex, y, imgW, imgH);
+            const imgUrl = getBillUrl(e.billImage);
+            if (imgUrl) {
+              const dataUrl = await fetchImageAsDataUrl(imgUrl);
+              if (dataUrl) {
+                try {
+                  doc.addImage(dataUrl, 'JPEG', ex + 1, y + 1, imgW - 2, imgH - 2);
+                } catch {
+                  doc.setFontSize(7);
+                  doc.text('Image not available', ex + 5, y + imgH / 2);
+                }
+              } else {
+                doc.setFontSize(7);
+                doc.text('Image not available', ex + 5, y + imgH / 2);
+              }
+            }
+            doc.setFillColor(245, 245, 245);
+            doc.rect(ex, y + imgH, imgW, capH, 'F');
+            doc.setFontSize(6);
+            doc.text(e.subject, ex + 1, y + imgH + 3);
+            doc.text(`LKR ${(e.amount || 0).toFixed(2)} | ${e.submittedBy || 'Unknown'}`, ex + 1, y + imgH + 6);
+          }
+          y += cellH + 2;
+        }
+      }
+
+      doc.save(`${report.projectName.replace(/\s+/g, '_')}_Report.pdf`);
+    } catch (err) {
+      alert('Failed to generate PDF: ' + err.message);
+    } finally {
       setDownloading(false);
-    }, 300);
+    }
   };
 
   useEffect(() => {
@@ -83,19 +275,12 @@ export default function Report() {
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto">
-      <style>{`
-        @media print {
-          body { background: white !important; }
-          nav, .no-print { display: none !important; }
-          @page { margin: 15mm; }
-        }
-      `}</style>
       <Link to={`/projects/${projectId}`} className="text-blue-600 hover:text-blue-700 mb-3 sm:mb-4 inline-flex items-center gap-1 text-sm font-medium">&larr; Back to Project</Link>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6 mt-1 sm:mt-2">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Budget Report</h1>
         <button onClick={downloadPdf} disabled={downloading}
-          className="no-print self-start sm:self-auto bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition font-medium text-sm cursor-pointer disabled:opacity-50">
-          {downloading ? 'Opening Print Dialog...' : 'Download PDF'}
+          className="self-start sm:self-auto bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition font-medium text-sm cursor-pointer disabled:opacity-50">
+          {downloading ? 'Generating PDF...' : 'Download PDF'}
         </button>
       </div>
 
