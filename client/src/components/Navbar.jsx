@@ -35,23 +35,7 @@ export default function Navbar() {
               <button onClick={handleLogout} className="text-red-500 hover:text-red-700 cursor-pointer">Logout</button>
             </div>
           </>
-        ) : (
-          <>
-            <button onClick={() => setMenuOpen(!menuOpen)} className="sm:hidden p-2 text-gray-600 hover:text-blue-600 cursor-pointer">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {menuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-            </button>
-            <div className="hidden sm:flex items-center gap-4">
-              <Link to="/login" className="text-gray-600 hover:text-blue-600">Sign In</Link>
-              <Link to="/register" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">Sign Up</Link>
-            </div>
-          </>
-        )}
+        ) : null}
       </div>
 
       {menuOpen && (
@@ -62,12 +46,7 @@ export default function Navbar() {
               <Link to="/profile" onClick={() => setMenuOpen(false)} className="text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-gray-50">{profile?.name || user.email}</Link>
               <button onClick={handleLogout} className="text-red-500 hover:text-red-700 text-left px-2 py-1.5 rounded hover:bg-red-50 cursor-pointer">Logout</button>
             </>
-          ) : (
-            <>
-              <Link to="/login" onClick={() => setMenuOpen(false)} className="text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-gray-50">Sign In</Link>
-              <Link to="/register" onClick={() => setMenuOpen(false)} className="text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-gray-50">Sign Up</Link>
-            </>
-          )}
+          ) : null}
         </div>
       )}
     </nav>
