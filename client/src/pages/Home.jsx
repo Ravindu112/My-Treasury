@@ -25,22 +25,7 @@ export default function Home() {
                                 >
                                     Go to My Projects
                                 </Link>
-                            ) : (
-                                <>
-                                    <Link
-                                        to="/register"
-                                        className="inline-block bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-lg shadow-lg hover:shadow-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-semibold text-center"
-                                    >
-                                        Get Started
-                                    </Link>
-                                    <Link
-                                        to="/login"
-                                        className="inline-block bg-white text-blue-600 border-2 border-blue-600 px-8 py-3 rounded-lg hover:bg-blue-50 transition-all duration-200 font-semibold text-center"
-                                    >
-                                        Sign In
-                                    </Link>
-                                </>
-                            )}
+                            ) : null}
                         </div>
                     </div>
 
@@ -119,6 +104,52 @@ export default function Home() {
                     </div>
                 </div>
             )}
+
+            {/* Footer */}
+            <footer className="bg-gray-900 text-gray-300 py-12">
+                <div className="max-w-6xl mx-auto px-4 sm:px-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mb-8">
+                        {/* Brand */}
+                        <div>
+                            <h3 className="text-xl font-bold text-white mb-3">My Treasury</h3>
+                            <p className="text-gray-400 text-sm">
+                                Simplify project budgeting and expense tracking with ease.
+                            </p>
+                        </div>
+
+                        {/* Quick Links */}
+                        <div>
+                            <h4 className="text-white font-semibold mb-4">Quick Links</h4>
+                            <ul className="space-y-2 text-sm">
+                                <li><a href="/" className="text-gray-400 hover:text-white transition">Home</a></li>
+                                <li>{!user && <Link to="/login" className="text-gray-400 hover:text-white transition">Sign In</Link>}</li>
+                                <li>{!user && <Link to="/register" className="text-gray-400 hover:text-white transition">Sign Up</Link>}</li>
+                                {user && <li><Link to="/dashboard" className="text-gray-400 hover:text-white transition">Dashboard</Link></li>}
+                            </ul>
+                        </div>
+
+                        {/* CTA for Non-Users */}
+                        {!user && (
+                            <div className="text-center sm:text-right">
+                                <p className="text-gray-400 text-sm mb-3">Start your journey today</p>
+                                <Link
+                                    to="/register"
+                                    className="inline-block bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-all duration-200 font-medium text-sm"
+                                >
+                                    Create Free Account
+                                </Link>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Copyright */}
+                    <div className="border-t border-gray-800 pt-8">
+                        <p className="text-center text-gray-500 text-sm">
+                            &copy; {new Date().getFullYear()} My Treasury. All rights reserved.
+                        </p>
+                    </div>
+                </div>
+            </footer>
         </div>
     );
 }
