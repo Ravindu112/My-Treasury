@@ -110,12 +110,7 @@ export default function Home() {
                         <p className="text-blue-100 text-lg mb-8">
                             Start managing your projects and expenses today
                         </p>
-                        <Link
-                            to="/register"
-                            className="inline-block bg-white text-blue-600 px-8 py-3 rounded-lg hover:bg-gray-50 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl"
-                        >
-                            Create Free Account
-                        </Link>
+
                     </div>
                 </div>
             )}
